@@ -7,8 +7,7 @@ import threading
 import datetime
 import os
 import numpy as np
-from collections import deque
-from Deep_SORT_PyTorch.deep_sort import DeepSort
+
 
 app = Flask(__name__)
 
@@ -46,24 +45,6 @@ def create_nested_directories(model_name):
         os.makedirs(nested_dir_path)
     return nested_dir_path
 
-# class BasicTracker:
-#     def __init__(self):
-#         self.objects = {}
-#         self.id_count = 1
-
-#     def update(self, detections):
-#         new_objects = {}
-#         for detection in detections:
-#             x1, y1, x2, y2, conf, cls = detection[:6]
-#             centroid = np.array([(x1 + x2) / 2, (y1 + y2) / 2])
-#             # Simple tracking: assign new ID for each detection, in a real scenario you would match these
-#             new_objects[self.id_count] = {'centroid': centroid, 'bbox': (x1, y1, x2, y2), 'conf': conf, 'cls': cls}
-#             self.id_count += 1
-
-#         # Determine new detections (simplified logic)
-#         new_ids = set(new_objects.keys()) - set(self.objects.keys())
-#         self.objects = new_objects  # Update tracked objects
-#         return new_objects, new_ids
 class BasicTracker:
     def __init__(self):
         self.objects = {}
@@ -108,7 +89,10 @@ def process_and_stream_frames(model_name, camera_url, stream_key):
     stream_processes[stream_key] = process
 
     tracker = BasicTracker()
-
+    time_reference = datetime.datetime.now()
+    counter_frame = 0
+    processed_fps = 0
+    num_people = 0
     try:
         while True:
             ret, frame = video_cap.read()
@@ -120,7 +104,39 @@ def process_and_stream_frames(model_name, camera_url, stream_key):
 
             # Update tracker and draw bounding boxes
             tracked_objects, new_ids = tracker.update(detections)
+            
+            if model_name == 'crowd':
+                   
+                num_people = 0
+                for obj in detections:
+                    # Class ID for 'person' is assumed to be 0
+                    if int(obj[5]) == 0 and obj[4] >= 0.75:  # Check confidence
+                        xmin, ymin, xmax, ymax = map(int, obj[:4])
+                        num_people += 1
+                        cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (0, 0, 255), 2)
+                        cv2.putText(frame, f"person {obj[4]:.2f}", (xmin, ymin - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
 
+                # Update FPS calculation
+                time_now = datetime.datetime.now()
+                time_diff = (time_now - time_reference).total_seconds()
+                if time_diff >= 1:
+                    time_reference = time_now
+                    processed_fps = counter_frame
+                    counter_frame = 0
+                else:
+                    counter_frame += 1
+
+                # Display the number of people and FPS on the frame
+                cv2.putText(frame, f'People: {num_people}', (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                if time_diff >= 10                                                                    :  # Capture an image every 5 minutes (300 seconds)
+                    today_folder = datetime.datetime.now().strftime("%Y-%m-%d")
+                    image_folder_path = os.path.join(os.getcwd(), "history", today_folder, model_name)
+                    if not os.path.exists(image_folder_path):
+                        os.makedirs(image_folder_path)
+                    image_name = f"{datetime.datetime.now().strftime('%H_%M_%S')}.jpg"
+                    img_path = os.path.join(image_folder_path, image_name)
+                    cv2.imwrite(img_path, frame)
+                         
             # Render frame with tracked objects
             for obj_id, obj in tracked_objects.items():
                 x1, y1, x2, y2 = obj['bbox']
@@ -148,7 +164,7 @@ def process_and_stream_frames(model_name, camera_url, stream_key):
                     frames_since_last_capture[obj_id] += 1
                     cv2.imwrite(img_path, frame)
                    
-
+                
 
             try:
                 process.stdin.write(frame.tobytes())
