@@ -7,15 +7,13 @@ import threading
 import datetime
 import os
 import numpy as np
-from flask_cors import CORS
+from ultralytics import YOLO
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 
 app = Flask(__name__)
-# Allow all origins for all routes
-CORS(app)
 
 # Define your email settings
 SMTP_SERVER = 'smtp.gmail.com'  # Replace with your SMTP server
@@ -109,7 +107,9 @@ def process_and_stream_frames(model_name, camera_url, stream_key):
     global stream_processes,frames_since_last_capture
     rtmp_url = f"{camera_url}_{model_name}"
     model_path = f'{MODEL_BASE_PATH}/{model_name}.pt'
-    model = torch.hub.load('yolov5', 'custom', path=model_path, source='local', force_reload=True, device=0)
+    # model = torch.hub.load('yolov5', 'custom', path=model_path, source='local', force_reload=True, device='cpu')
+    model = model = YOLO("yolov8x.pt")
+    
     
     # Set the confidence threshold to 0.7
     model.conf = 0.7
@@ -248,6 +248,12 @@ def process_and_stream_frames(model_name, camera_url, stream_key):
             del stream_processes[stream_key]
         video_cap.release()
 
+
+                
+           
+    
+
+
 @app.route('/set_model', methods=['POST'])
 def set_model_and_stream():
     global stream_process
@@ -273,5 +279,5 @@ def set_model_and_stream():
     return jsonify({'message': 'Streaming started', 'rtmp_url': f"{camera_url}_{model_name}"})
 
 if __name__ == '__main__':
-    app.run(debug=True,host="0.0.0.0",port=5000)
+    app.run(debug=True,host="0.0.0.0",port=6000)
 
