@@ -204,7 +204,7 @@ def process_and_stream_frames(model_name, camera_url, stream_key):
                             email_thread.start()
 
                             email_sent_flag = True
-            elif model_name == 'yolov5s': 
+            else: 
                      
                         # Render frame with tracked objects
                 for obj_id, obj in tracked_objects.items():
