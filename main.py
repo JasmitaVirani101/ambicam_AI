@@ -319,7 +319,20 @@ def delete_model():
         return jsonify({'error': 'Model does not exist'}), 404
     os.remove(model_path)
     return jsonify({'message': 'Model deleted successfully'}), 200
-
+############################################################################
+################# model list
+@app.route('/get_models', methods=['GET'])
+def get_models():
+    models_dir = MODEL_BASE_PATH
+    try:
+        # List all files in the models directory
+        files = os.listdir(models_dir)
+        # Filter out files to only include .pt files
+        model_files = [file for file in files if file.endswith('.pt')]
+        return jsonify({'models': model_files}), 200
+    except Exception as e:
+        # Handle errors, such as if the directory does not exist
+        return jsonify({'error': str(e)}), 500
 ##############################################################################################
 if __name__ == '__main__':
     app.run(debug=True,host="0.0.0.0",port=5000)
