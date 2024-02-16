@@ -9,6 +9,7 @@ import threading
 import datetime
 import os
 import numpy as np
+import re
 from flask_cors import CORS
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -109,7 +110,8 @@ def send_email_notification_with_image(subject, body, image_path):
 email_sent_flag = False
 def process_and_stream_frames(model_name, camera_url, stream_key):
     global stream_processes,frames_since_last_capture
-    rtmp_url = f"{camera_url}_{model_name}"
+  
+    rtmp_url = stream_key
     model_path = f'{MODEL_BASE_PATH}/{model_name}.pt'
     model = torch.hub.load('yolov5', 'custom', path=model_path, source='local', force_reload=True, device=0)
     
@@ -130,7 +132,7 @@ def process_and_stream_frames(model_name, camera_url, stream_key):
                rtmp_url]
     process = sp.Popen(command, stdin=sp.PIPE)
     stream_processes[stream_key] = process
-
+    
     tracker = BasicTracker()
     time_reference = datetime.datetime.now()
     counter_frame = 0
@@ -155,7 +157,7 @@ def process_and_stream_frames(model_name, camera_url, stream_key):
                 num_people = 0
                 for obj in detections:
                     # Class ID for 'person' is assumed to be 0
-                    if int(obj[5]) == 0 and obj[4] >= 0.70:  # Check confidence
+                    if int(obj[5]) == 0 and obj[4] >= 0.60:  # Check confidence
                         xmin, ymin, xmax, ymax = map(int, obj[:4])
                         num_people += 1
                         cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (0, 0, 255), 2)
@@ -219,13 +221,18 @@ def process_and_stream_frames(model_name, camera_url, stream_key):
 
                     # Capture image if new object is detected and enough frames have passed since the last capture
                     if obj_id in new_ids or frames_since_last_capture[obj_id] > 30:
-                        today_folder = datetime.datetime.now().strftime("%Y-%m-%d")
-                        image_folder_path = os.path.join(os.getcwd(), "history", today_folder, model_name)
-                        if not os.path.exists(image_folder_path):
-                            os.makedirs(image_folder_path)
-                        image_name = f"{datetime.datetime.now().strftime('%H_%M_%S')}.jpg"
-                        img_path = os.path.join(image_folder_path, image_name)
-                        cv2.imwrite(img_path, frame)
+                        # today_folder = datetime.datetime.now().strftime("%Y-%m-%d")
+                        # image_folder_path = os.path.join(os.getcwd(), "history", today_folder, model_name)
+                        # if not os.path.exists(image_folder_path):
+                        #     os.makedirs(image_folder_path)
+                        # image_name = f"{datetime.datetime.now().strftime('%H_%M_%S')}.jpg"
+                        # img_path = os.path.join(image_folder_path, image_name)
+                        camera_id = stream_key.split('/')[-1] 
+                        image_name = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M:%S") + "_"+camera_id +".jpg"
+                        image_path = "/home/torqueai/blobdrive/" + image_name 
+                        cv2.imwrite(image_path, frame)
+                        print(f"Image captured: {image_name}")
+                       
 
                         # Reset the frame counter after capturing an image
                         frames_since_last_capture[obj_id] = 0
@@ -259,9 +266,16 @@ def set_model_and_stream():
 
     if not model_name or not camera_url:
         return jsonify({'error': 'Both model name and camera URL are required'}), 400
-
+    # Replace "media" with "media5" and "dvr" with digits to "live"
+    modified_url = re.sub(r'media\d*', 'media5', camera_url)
+    modified_url = re.sub(r'dvr\d+', 'live', modified_url)
+    
+    # Append the model name at the end of the URL, after a slash
+    modified_url_with_model = f"{modified_url}_{model_name}"
+    print("mooo",modified_url_with_model)
+    
     # Unique key to identify the stream (could be refined based on requirements)
-    stream_key = f"{camera_url}_{model_name}"
+    stream_key = modified_url_with_model
     
     # Check if a stream with the same key is already running, terminate if so
     if stream_key in stream_processes:
@@ -272,7 +286,7 @@ def set_model_and_stream():
     thread = threading.Thread(target=process_and_stream_frames, args=(model_name, camera_url, stream_key))
     thread.start()
 
-    return jsonify({'message': 'Streaming started', 'rtmp_url': f"{camera_url}_{model_name}"})
+    return jsonify({'message': 'Streaming started', 'rtmp_url':stream_key})
 ########################################################################################################
 ############# Model upload ,delete,rename ###############
 #####upload
@@ -333,6 +347,14 @@ def get_models():
     except Exception as e:
         # Handle errors, such as if the directory does not exist
         return jsonify({'error': str(e)}), 500
+    
+###############################################
+##############get the active streams
+@app.route('/running_streams', methods=['GET'])
+def get_running_streams():
+    # Collect all the stream keys representing the RTMP URLs of running streams
+    running_streams = list(stream_processes.keys())
+    return jsonify({'running_streams': running_streams})
 ##############################################################################################
 if __name__ == '__main__':
     app.run(debug=True,host="0.0.0.0",port=5000)
