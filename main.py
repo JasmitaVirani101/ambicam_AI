@@ -51,25 +51,28 @@ def stop_stream():
         return jsonify({'message': 'Streaming stopped successfully'})
     else:
         return jsonify({'error': 'Stream not found'}), 404
-def async_api_call(camera_id, image_path, customer_id, api_url="https://tn2023demo.vmukti.com/api/analytics"):
+def async_api_call(streamName, customer_id,image_name,cameraId,model_name):
     """
     Asynchronously sends data to the API.
     """
     try:
-        image_name = os.path.basename(image_path)
-        img_url = f"https://inferenceimage.blob.core.windows.net/inferenceimages/{image_name}"
+        image_name = image_name
+        img_url= f"https://inferenceimage.blob.core.windows.net/inferenceimages/{image_name}"
         send_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         data = {
-            'cameradid': camera_id, 
+            'cameraid': cameraId, 
             'sendtime': send_time, 
             'imgurl': img_url,
-            'an_id': 1, 
+            'modelname': model_name, 
             'ImgCount': 0,
-            'customerid': customer_id
+            'customerid': customer_id,
+            'streamname':streamName
         }
+        api_url="http://142.93.213.150:3000/api/post-analytics"
+
         response = requests.post(api_url, json=data)
         if response.status_code == 200:
-            print("Data sent successfully!", img_url)
+            print("Data sent successfully!")
         else:
             print("Failed to send data! Response Code:", response.status_code)
     except Exception as e:
@@ -130,7 +133,7 @@ def send_email_notification_with_image(subject, body, image_path):
     except Exception as e:
         print(f"Failed to send email with image: {e}")
 email_sent_flag = False
-def process_and_stream_frames(model_name, camera_url, stream_key,customer_id):
+def process_and_stream_frames(model_name, camera_url, stream_key,customer_id,cameraId,streamName):
     global stream_processes,frames_since_last_capture
   
     rtmp_url = stream_key
@@ -162,6 +165,13 @@ def process_and_stream_frames(model_name, camera_url, stream_key,customer_id):
     num_people = 0
     FIRE_CLASS_ID = 1
     customer_id=customer_id
+    cameraId=cameraId
+    streamName=streamName
+    previous_num_people = 0
+    last_capture_time = datetime.datetime.min  # Initialize with a minimum time
+
+    min_interval = datetime.timedelta(seconds=60)  # Minimum time interval between captures
+
     try:
         while True:
             ret, frame = video_cap.read()
@@ -178,6 +188,7 @@ def process_and_stream_frames(model_name, camera_url, stream_key,customer_id):
             if model_name == 'crowd':
                    
                 num_people = 0
+               
                 for obj in detections:
                     # Class ID for 'person' is assumed to be 0
                     if int(obj[5]) == 0 and obj[4] >= 0.60:  # Check confidence
@@ -197,14 +208,17 @@ def process_and_stream_frames(model_name, camera_url, stream_key,customer_id):
 
                 # Display the number of people and FPS on the frame
                 cv2.putText(frame, f'People: {num_people}', (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                if time_diff >= 10                                                                    :  # Capture an image every 5 minutes (300 seconds)
-                    today_folder = datetime.datetime.now().strftime("%Y-%m-%d")
-                    image_folder_path = os.path.join(os.getcwd(), "history", today_folder, model_name)
-                    if not os.path.exists(image_folder_path):
-                        os.makedirs(image_folder_path)
-                    image_name = f"{datetime.datetime.now().strftime('%H_%M_%S')}.jpg"
-                    img_path = os.path.join(image_folder_path, image_name)
-                    cv2.imwrite(img_path, frame)
+                if num_people != previous_num_people and (time_now - last_capture_time) > min_interval:
+                    # Update previous count
+                    previous_num_people = num_people # Capture an image every 5 minutes (300 seconds)
+                    last_capture_time = time_now
+                    streamName = streamName
+                    image_name = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M:%S") + "_"+streamName +".jpg"
+                    image_path = "/home/torqueai/blobdrive/" + image_name 
+
+                    cv2.imwrite(image_path, frame)
+                        # Call the API asynchronously
+                    threading.Thread(target=async_api_call, args=(streamName, customer_id,image_name,cameraId,model_name)).start()
             if model_name == 'fire':
                
                             # # Optionally, save the frame if fire is detected
@@ -219,13 +233,18 @@ def process_and_stream_frames(model_name, camera_url, stream_key,customer_id):
                             image_folder_path = os.path.join(os.getcwd(), "history", today_folder, model_name)
                             if not os.path.exists(image_folder_path):
                                 os.makedirs(image_folder_path)
-                            image_name = f"{datetime.datetime.now().strftime('%H_%M_%S')}.jpg"
-                            img_path = os.path.join(image_folder_path, image_name)
-                            cv2.imwrite(img_path, frame)
+                            streamName = streamName
+                            image_name = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M:%S") + "_"+streamName +".jpg"
+                            image_path = "/home/torqueai/blobdrive/" + image_name 
+
+                            cv2.imwrite(image_path, frame)
+                            # Call the API asynchronously
+                            threading.Thread(target=async_api_call, args=(model_name,image_name, customer_id,cameraId,streamName)).start()
+                         
 
 
                             email_thread = threading.Thread(target=send_email_notification_with_image,
-                                                            args=("Fire Detected!", "A fire has been detected. Please take immediate action.", img_path))
+                                                            args=("Fire Detected!", "A fire has been detected. Please take immediate action.", image_path))
                             email_thread.start()
 
                             email_sent_flag = True
@@ -244,19 +263,13 @@ def process_and_stream_frames(model_name, camera_url, stream_key,customer_id):
 
                     # Capture image if new object is detected and enough frames have passed since the last capture
                     if obj_id in new_ids or frames_since_last_capture[obj_id] > 30:
-                        # today_folder = datetime.datetime.now().strftime("%Y-%m-%d")
-                        # image_folder_path = os.path.join(os.getcwd(), "history", today_folder, model_name)
-                        # if not os.path.exists(image_folder_path):
-                        #     os.makedirs(image_folder_path)
-                        # image_name = f"{datetime.datetime.now().strftime('%H_%M_%S')}.jpg"
-                        # img_path = os.path.join(image_folder_path, image_name)
-                        camera_id = stream_key.split('/')[-1] 
-                        image_name = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M:%S") + "_"+camera_id +".jpg"
+                        streamName = streamName
+                        image_name = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M:%S") + "_"+streamName +".jpg"
                         image_path = "/home/torqueai/blobdrive/" + image_name 
 
                         cv2.imwrite(image_path, frame)
                          # Call the API asynchronously
-                        threading.Thread(target=async_api_call, args=(camera_id, image_path, customer_id)).start()
+                        threading.Thread(target=async_api_call, args=(model_name,image_name, customer_id,cameraId,streamName)).start()
                         frames_since_last_capture[obj_id] = 0
                     else:
                         # Increment the frame counter if no image was captured
@@ -283,6 +296,8 @@ def set_model_and_stream():
     model_name = data.get('model_name')
     camera_url = data.get('camera_url')
     customer_id = data.get('customer_id')
+    cameraId = data.get('cameraId')
+    stream_name = data.get('streamName')
     if not model_name or not camera_url:
         return jsonify({'error': 'Both model name and camera URL are required'}), 400
     # Replace "media" with "media5" and "dvr" with digits to "live"
@@ -302,10 +317,10 @@ def set_model_and_stream():
         del stream_processes[stream_key]
 
     # Start a new stream
-    thread = threading.Thread(target=process_and_stream_frames, args=(model_name, camera_url, stream_key,customer_id))
+    thread = threading.Thread(target=process_and_stream_frames, args=(model_name, camera_url, stream_key,customer_id,cameraId,stream_name))
     thread.start()
 
-    return jsonify({'message': 'Streaming started', 'rtmp_url':stream_key,'customer_id':customer_id})
+    return jsonify({'message': 'Streaming started', 'rtmp_url':stream_key,'customer_id':customer_id,'cameraId':cameraId,'streamName':stream_name})
 ########################################################################################################
 ############# Model upload ,delete,rename ###############
 #####upload
