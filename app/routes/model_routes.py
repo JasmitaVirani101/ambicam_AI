@@ -1,8 +1,13 @@
+from flask import Blueprint, request, jsonify
+from werkzeug.utils import secure_filename
+import os
+
+
 from flask import Flask, jsonify, request
 from werkzeug.utils import secure_filename
 
 import cv2
-import requests
+
 import torch
 import subprocess as sp
 import threading
@@ -15,21 +20,11 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
+from config import SMTP_SERVER
 
-app = Flask(__name__)
-# Allow all origins for all routes
-CORS(app)
+model_routes = Blueprint('model_routes', __name__, url_prefix='/model')
 
-# Define your email settings
-SMTP_SERVER = 'smtp.gmail.com'  # Replace with your SMTP server
-SMTP_PORT = 587  # SMTP port number
-SMTP_USERNAME = 'jcvirani2000@gmail.com'  # Replace with your SMTP server username
-SMTP_PASSWORD = 'nhou pwgh fddd brxj'  # Replace with your SMTP server password
-SENDER_EMAIL = 'jcvirani2000@gmail.com'  # Replace with the sender's email address
-RECIPIENT_EMAIL = 'jasmita@ambiplatforms.com'  # Replace with the recipient's email address
 
-# Base path where models are stored
-MODEL_BASE_PATH = 'prebuilt_model/'
 selected_model_name = None  # No default model
 detected_ids = set() 
 stream_processes = {}
@@ -108,7 +103,7 @@ def send_email_notification_with_image(subject, body, image_path):
     except Exception as e:
         print(f"Failed to send email with image: {e}")
 email_sent_flag = False
-def process_and_stream_frames(model_name, camera_url, stream_key,customer_id):
+def process_and_stream_frames(model_name, camera_url, stream_key):
     global stream_processes,frames_since_last_capture
   
     rtmp_url = stream_key
@@ -230,29 +225,9 @@ def process_and_stream_frames(model_name, camera_url, stream_key,customer_id):
                         camera_id = stream_key.split('/')[-1] 
                         image_name = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M:%S") + "_"+camera_id +".jpg"
                         image_path = "/home/torqueai/blobdrive/" + image_name 
-
                         cv2.imwrite(image_path, frame)
-                        send_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        img_url = f"https://inferenceimage.blob.core.windows.net/inferenceimages/{image_name}"
-                        an_id = "2"
-                        img_count = 0
-                        api_url = "http://142.93.213.150:3000/api/post-analytics"
-                        customer_id = customer_id
-                        data = {'cameradid': camera_id, 'sendtime': send_time, 'imgurl': img_url,
-                                'an_id': an_id, 'ImgCount': img_count,'customerid':customer_id}
-                        response = requests.post(api_url, json=data)
-                        if 200 <= response.status_code < 300:
-                                print("Data sent successfully!", img_url)
-                        else:
-                                print(f"Failed to send data! Status code: {response.status_code} Response: {response.text}")
-                        # try:
-                        #     response = requests.post(api_url, json=data, timeout=10)
-                        #     if 200 <= response.status_code < 300:
-                        #         print("Data sent successfully!", img_url)
-                        #     else:
-                        #         print(f"Failed to send data! Status code: {response.status_code} Response: {response.text}")
-                        # except requests.exceptions.RequestException as e:
-                        #     print(f"Request failed: {e}")
+                      
+
                         # Reset the frame counter after capturing an image
                         frames_since_last_capture[obj_id] = 0
                     else:
@@ -282,8 +257,7 @@ def set_model_and_stream():
     data = request.get_json()
     model_name = data.get('model_name')
     camera_url = data.get('camera_url')
-    customer_id = data.get('customer_id')
-    print("CCCCCCCCCCCCCCCCccc",customer_id)
+
     if not model_name or not camera_url:
         return jsonify({'error': 'Both model name and camera URL are required'}), 400
     # Replace "media" with "media5" and "dvr" with digits to "live"
@@ -303,10 +277,10 @@ def set_model_and_stream():
         del stream_processes[stream_key]
 
     # Start a new stream
-    thread = threading.Thread(target=process_and_stream_frames, args=(model_name, camera_url, stream_key,customer_id))
+    thread = threading.Thread(target=process_and_stream_frames, args=(model_name, camera_url, stream_key))
     thread.start()
 
-    return jsonify({'message': 'Streaming started', 'rtmp_url':stream_key,'customer_id':customer_id})
+    return jsonify({'message': 'Streaming started', 'rtmp_url':stream_key})
 ########################################################################################################
 ############# Model upload ,delete,rename ###############
 #####upload
@@ -375,7 +349,3 @@ def get_running_streams():
     # Collect all the stream keys representing the RTMP URLs of running streams
     running_streams = list(stream_processes.keys())
     return jsonify({'running_streams': running_streams})
-##############################################################################################
-if __name__ == '__main__':
-    app.run(debug=True,host="0.0.0.0",port=5000)
-
