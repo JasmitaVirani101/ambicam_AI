@@ -51,7 +51,29 @@ def stop_stream():
         return jsonify({'message': 'Streaming stopped successfully'})
     else:
         return jsonify({'error': 'Stream not found'}), 404
-
+def async_api_call(camera_id, image_path, customer_id, api_url="https://tn2023demo.vmukti.com/api/analytics"):
+    """
+    Asynchronously sends data to the API.
+    """
+    try:
+        image_name = os.path.basename(image_path)
+        img_url = f"https://inferenceimage.blob.core.windows.net/inferenceimages/{image_name}"
+        send_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        data = {
+            'cameradid': camera_id, 
+            'sendtime': send_time, 
+            'imgurl': img_url,
+            'an_id': 1, 
+            'ImgCount': 0,
+            'customerid': customer_id
+        }
+        response = requests.post(api_url, json=data)
+        if response.status_code == 200:
+            print("Data sent successfully!", img_url)
+        else:
+            print("Failed to send data! Response Code:", response.status_code)
+    except Exception as e:
+        print(f"Error sending data to API: {e}")
 
 # Additional function for creating nested directories
 def create_nested_directories(model_name):
@@ -139,6 +161,7 @@ def process_and_stream_frames(model_name, camera_url, stream_key,customer_id):
     processed_fps = 0
     num_people = 0
     FIRE_CLASS_ID = 1
+    customer_id=customer_id
     try:
         while True:
             ret, frame = video_cap.read()
@@ -232,35 +255,12 @@ def process_and_stream_frames(model_name, camera_url, stream_key,customer_id):
                         image_path = "/home/torqueai/blobdrive/" + image_name 
 
                         cv2.imwrite(image_path, frame)
-                        send_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        img_url = f"https://inferenceimage.blob.core.windows.net/inferenceimages/{image_name}"
-                        an_id = "2"
-                        img_count = 0
-                        api_url = "http://142.93.213.150:3000/api/post-analytics"
-                        customer_id = customer_id
-                        data = {'cameradid': camera_id, 'sendtime': send_time, 'imgurl': img_url,
-                                'an_id': an_id, 'ImgCount': img_count,'customerid':customer_id}
-                        response = requests.post(api_url, json=data)
-                        if 200 <= response.status_code < 300:
-                                print("Data sent successfully!", img_url)
-                        else:
-                                print(f"Failed to send data! Status code: {response.status_code} Response: {response.text}")
-                        # try:
-                        #     response = requests.post(api_url, json=data, timeout=10)
-                        #     if 200 <= response.status_code < 300:
-                        #         print("Data sent successfully!", img_url)
-                        #     else:
-                        #         print(f"Failed to send data! Status code: {response.status_code} Response: {response.text}")
-                        # except requests.exceptions.RequestException as e:
-                        #     print(f"Request failed: {e}")
-                        # Reset the frame counter after capturing an image
+                         # Call the API asynchronously
+                        threading.Thread(target=async_api_call, args=(camera_id, image_path, customer_id)).start()
                         frames_since_last_capture[obj_id] = 0
                     else:
                         # Increment the frame counter if no image was captured
                         frames_since_last_capture[obj_id] += 1
-                   
-                
-
             try:
                 process.stdin.write(frame.tobytes())
             except BrokenPipeError:
@@ -283,7 +283,6 @@ def set_model_and_stream():
     model_name = data.get('model_name')
     camera_url = data.get('camera_url')
     customer_id = data.get('customer_id')
-    print("CCCCCCCCCCCCCCCCccc",customer_id)
     if not model_name or not camera_url:
         return jsonify({'error': 'Both model name and camera URL are required'}), 400
     # Replace "media" with "media5" and "dvr" with digits to "live"
