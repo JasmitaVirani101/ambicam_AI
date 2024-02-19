@@ -51,7 +51,7 @@ def stop_stream():
         return jsonify({'message': 'Streaming stopped successfully'})
     else:
         return jsonify({'error': 'Stream not found'}), 404
-def async_api_call(streamName, customer_id,image_name,cameraId,model_name):
+def async_api_call(streamName, customer_id,image_name,cameraId,model_name,imgcount):
     """
     Asynchronously sends data to the API.
     """
@@ -64,7 +64,7 @@ def async_api_call(streamName, customer_id,image_name,cameraId,model_name):
             'sendtime': send_time, 
             'imgurl': img_url,
             'modelname': model_name, 
-            'ImgCount': 0,
+            'ImgCount': int(imgcount),
             'customerid': customer_id,
             'streamname':streamName
         }
@@ -149,7 +149,7 @@ def process_and_stream_frames(model_name, camera_url, stream_key,customer_id,cam
                '-f', 'rawvideo',
                '-pix_fmt', 'bgr24',
                '-s', '{}x{}'.format(int(video_cap.get(3)), int(video_cap.get(4))),
-               '-r', '15',
+               '-r', '5',
                '-i', '-',
                '-c:v', 'libx264',
                '-pix_fmt', 'yuv420p',
@@ -171,7 +171,7 @@ def process_and_stream_frames(model_name, camera_url, stream_key,customer_id,cam
     last_capture_time = datetime.datetime.min  # Initialize with a minimum time
 
     min_interval = datetime.timedelta(seconds=60)  # Minimum time interval between captures
-
+    class_counts = {}
     try:
         while True:
             ret, frame = video_cap.read()
@@ -218,7 +218,7 @@ def process_and_stream_frames(model_name, camera_url, stream_key,customer_id,cam
 
                     cv2.imwrite(image_path, frame)
                         # Call the API asynchronously
-                    threading.Thread(target=async_api_call, args=(streamName, customer_id,image_name,cameraId,model_name)).start()
+                    threading.Thread(target=async_api_call, args=(streamName, customer_id,image_name,cameraId,model_name,num_people)).start()
             if model_name == 'fire':
                
                             # # Optionally, save the frame if fire is detected
@@ -239,7 +239,7 @@ def process_and_stream_frames(model_name, camera_url, stream_key,customer_id,cam
 
                             cv2.imwrite(image_path, frame)
                             # Call the API asynchronously
-                            threading.Thread(target=async_api_call, args=(model_name,image_name, customer_id,cameraId,streamName)).start()
+                            threading.Thread(target=async_api_call, args=(streamName, customer_id,image_name,cameraId,model_name,0)).start()
                          
 
 
@@ -254,13 +254,19 @@ def process_and_stream_frames(model_name, camera_url, stream_key,customer_id,cam
                 for obj_id, obj in tracked_objects.items():
                     x1, y1, x2, y2 = obj['bbox']
                     cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+                    class_id = int(obj['cls'])
+                    class_name = model.names[class_id]
                     label = f"{model.names[int(obj['cls'])]}"
                     cv2.putText(frame, label, (int(x1), int(y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
 
                     # Check if the object ID is not in the frames_since_last_capture and update accordingly
                     if obj_id not in frames_since_last_capture:
                         frames_since_last_capture[obj_id] = 0
-
+                     # Update class counts
+                    if class_name in class_counts:
+                        class_counts[class_name] += 1
+                    else:
+                        class_counts[class_name] = 1
                     # Capture image if new object is detected and enough frames have passed since the last capture
                     if obj_id in new_ids or frames_since_last_capture[obj_id] > 30:
                         streamName = streamName
@@ -269,7 +275,7 @@ def process_and_stream_frames(model_name, camera_url, stream_key,customer_id,cam
 
                         cv2.imwrite(image_path, frame)
                          # Call the API asynchronously
-                        threading.Thread(target=async_api_call, args=(model_name,image_name, customer_id,cameraId,streamName)).start()
+                        threading.Thread(target=async_api_call, args=(streamName, customer_id,image_name,cameraId,model_name,len(class_counts))).start()
                         frames_since_last_capture[obj_id] = 0
                     else:
                         # Increment the frame counter if no image was captured
